@@ -172,6 +172,17 @@ double PID::compute(double input)
 
     double error = setpoint_ - input;
 
+    if(wrap_error_)
+    {
+        double sin_error = std::sin(setpoint_ - input);
+        double cos_error = std::cos(setpoint_ - input);
+
+        error = std::atan2(sin_error, cos_error);
+    }
+
+    // std::cout << "  error: " << error << std::endl;
+    // std::cout << "===================================" << std::endl;
+
     double p = kp_ * error;
 
     i_ += ki_ * error * dt_;
@@ -215,6 +226,14 @@ double PID::compute(double input, double dt)
 
 double PID::compute(double input, double setpoint, double dt)
 {
+    set_dt(dt);
+    set_setpoint(setpoint);
+    return compute(input);
+}
+
+double PID::compute(double input, double setpoint, double dt, bool wrap_error)
+{
+    wrap_error_ = wrap_error;
     set_dt(dt);
     set_setpoint(setpoint);
     return compute(input);

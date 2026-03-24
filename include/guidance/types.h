@@ -75,6 +75,16 @@ namespace vsa_guidance
         double y;
         double z;
         double speed;
+
+        guidance_setpoint operator+(const guidance_setpoint& other) const
+        {
+            return {x + other.x, y + other.y, z + other.z, speed + other.speed};
+        }
+
+        guidance_setpoint operator*(double k) const
+        {
+            return {x * k, y * k, z * k, speed * k};
+        }
     };
 
     struct guidance_output_t

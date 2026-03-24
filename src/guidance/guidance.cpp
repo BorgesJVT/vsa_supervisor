@@ -1,4 +1,5 @@
 #include "../../include/guidance/guidance.h"
+#include <iostream>
 
 using namespace vsa_guidance;
 
@@ -86,8 +87,19 @@ guidance_output_t Guidance::execute(odometry_t current_odometry, double dt)
     double abs_xy_error = std::sqrt((error_pos_x * error_pos_x) + 
                                     (error_pos_y * error_pos_y));
 
-    double desire_pitch = -std::atan2(error_pos_z, -std::abs(error_pos_x));
+    double desire_pitch = -std::atan2(error_pos_z, std::abs(error_pos_x));
+
+    // double desire_pitch = -std::atan2(error_pos_z, error_pos_x);
     double desire_yaw = std::atan2(error_pos_y, error_pos_x);
+
+    // std::cout << "current_odometry.pose.x: " << current_odometry.pose.x << std::endl;
+    // std::cout << "current_odometry.pose.y: " << current_odometry.pose.y << std::endl;
+
+    // std::cout << "abs_xy_error: " << abs_xy_error << std::endl;
+    // std::cout << "error_pos_x: " << error_pos_x << std::endl;
+    // std::cout << "error_pos_y: " << error_pos_y << std::endl;
+    std::cout << "z: " << current_odometry.pose.z << std::endl;
+    std::cout << "setpoint z: " << setpoint_.z << std::endl;
 
     if(abs_xy_error < abs_xy_tolerance_error_)
     {
@@ -102,14 +114,27 @@ guidance_output_t Guidance::execute(odometry_t current_odometry, double dt)
         result.thruster = thruster_controller_->compute(current_odometry.xy_abs_velocity,
                                                         setpoint_.speed,
                                                         dt);
-
+        
+        std::cout << "Desire Pitch: " << desire_pitch << std::endl;
+        std::cout << "Current Pitch: " << current_odometry.orientation.pitch << std::endl;
         result.horizontal_rudders = pitch_controller_->compute(current_odometry.orientation.pitch,
                                                                 desire_pitch,
-                                                                dt);
+                                                                dt,
+                                                                true);
+ 
+        std::cout << "Horizontal Rudders: " << result.horizontal_rudders << std::endl;
+        std::cout << "==========================================================================" << std::endl;
+        
+        // std::cout << "Desired Yaw: "  << desire_yaw << std::endl;
+        // std::cout << "Current Yaw: " << current_odometry.orientation.yaw << std::endl;
 
         result.vertical_rudders = yaw_controller_->compute(current_odometry.orientation.yaw,
                                                             desire_yaw,
-                                                            dt);
+                                                            dt,
+                                                            true);
+
+        // std::cout << "Vertical Rudders: " << result.vertical_rudders << std::endl;
+        // std::cout << "==========================================================================" << std::endl;
 
         set_state(guidance_state_e::guidance_status_IN_PROGRESS);
     }

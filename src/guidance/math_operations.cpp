@@ -6,6 +6,40 @@ double vsa_guidance::unwrap_angle(double value)
     return result;
 }
 
+double vsa_guidance::deg_to_rad(double angle_deg)
+{
+    return (M_PI / 180) * angle_deg;
+}
+
+double vsa_guidance::rad_to_deg(double angle_rad)
+{
+    return (180 / M_PI) * angle_rad;
+}
+
+void vsa_guidance::rotate_angle(double angle, bool clockwise, double& x, double& y)
+{
+    double x0 = x;
+    double y0 = y;
+    double sin_angle = std::sin(angle);
+    double cos_angle = std::cos(angle);
+
+    if(clockwise)
+    {
+        x = (x0 * cos_angle) + (y0 * sin_angle);
+        y = (-x0 * sin_angle) + (y0 * cos_angle);
+    }
+    else
+    {
+        x = (x0 * cos_angle) - (y0 * sin_angle);
+        y = (x0 * sin_angle) + (y0 * cos_angle);
+    }
+}
+
+double vsa_guidance::min_signed_angle(double source_angle, double target_angle)
+{
+    return std::atan2(std::sin(target_angle - source_angle), std::cos(target_angle - source_angle));
+}
+
 vsa_guidance::orientation_t vsa_guidance::get_euler_angles(geometry_msgs::msg::Quaternion *quaternion)
 {
     vsa_guidance::orientation_t result;

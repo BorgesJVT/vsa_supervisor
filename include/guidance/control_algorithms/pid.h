@@ -47,6 +47,7 @@ namespace vsa_guidance
             double compute(double input);
             double compute(double input, double dt);
             double compute(double input, double setpoint, double dt);
+            double compute(double input, double setpoint, double dt, bool wrap_error);
 
         private:
             double saturate_output(double output);
@@ -69,6 +70,7 @@ namespace vsa_guidance
             bool saturate_output_ = false;
             bool norm_output_ = false;
             bool only_positives_outputs_ = false;
+            bool wrap_error_ = false;
     };
 }
 

@@ -13,6 +13,16 @@ namespace vsa_guidance
 {
     double unwrap_angle(double value);
 
+    double deg_to_rad(double angle_deg);
+
+    double rad_to_deg(double angle_rad);
+
+    //! XY Coordinate conversion considering a rotation angle [rad]
+    void rotate_angle(double angle, bool clockwise, double& x, double& y);
+
+    //! Computes the smallest signed angle between two angles [rad]
+    double min_signed_angle(double source_angle, double target_angle);
+
     orientation_t get_euler_angles(geometry_msgs::msg::Quaternion *quaternion);
 
     odometry_t msg_odometry_to_odometry_t(nav_msgs::msg::Odometry msg);

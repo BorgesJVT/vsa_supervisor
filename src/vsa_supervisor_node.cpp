@@ -131,7 +131,7 @@ class Supervisor : public rclcpp::Node
 
       // Send values to actuators (calculated values from automatic controller, parsed values from teleoperation or
       // values to stop vehicle in case of error or abort maneuver).
-      send_signal_to_actuators();
+      //send_signal_to_actuators();
     }
 
   // Subscribers Callbacks
@@ -153,6 +153,11 @@ class Supervisor : public rclcpp::Node
 
     void imc_plan_db_callback(const neptus_msgs::msg::PlanDB msg)
     {
+      for(int i = 0; i < (int)msg.plan_spec.maneuvers.size(); i++)
+      {
+        std::cout << msg.plan_spec.maneuvers[i].maneuver_id << std::endl;
+      }
+
       if(msg.op == plan_db_op_e::plan_db_op_set_plan)
       {        
         // Set plan case
@@ -197,8 +202,9 @@ class Supervisor : public rclcpp::Node
     {      
       if(msg.op == 0) // Start Plan
       {
-        if(msg.plan_id == "teleoperation-mode")
+        if((msg.plan_id == "teleoperation-mode") || (msg.plan_id == "teleoperation-16388"))
         {
+          msg_current_plan_control_state.man_id = msg.plan_id;
           set_state(neptus_msgs::msg::VehicleState::EXTERNAL);
         }
         else
@@ -289,6 +295,9 @@ class Supervisor : public rclcpp::Node
       // Main Loop Rate
       this->declare_parameter("main_loop_rate_hz", 1.0);
 
+      // Motors Command Update Loop Rate
+      this->declare_parameter("motors_command_loop_rate_hz", 1.0);
+
       // Paramenters
       this->declare_parameter("initial_lat", 0.0);
       this->declare_parameter("initial_long", 0.0);
@@ -374,8 +383,12 @@ class Supervisor : public rclcpp::Node
       double main_timer_frequency = this->get_parameter("main_loop_rate_hz").as_double();
       double main_timer_period = (1.0 / main_timer_frequency) * 1000.0;
       std::chrono::duration<double, std::milli>  main_timer_period_ms{main_timer_period};
-
       timer_main_loop = this->create_wall_timer(main_timer_period_ms, std::bind(&Supervisor::main_loop, this));
+
+      double motors_command_timer_frequency = this->get_parameter("motors_command_loop_rate_hz").as_double();
+      double motors_command_timer_period = (1.0 / motors_command_timer_frequency) * 1000.0;
+      std::chrono::duration<double, std::milli>  motors_command_timer_period_ms{motors_command_timer_period};
+      timer_motors_command_loop = this->create_wall_timer(motors_command_timer_period_ms, std::bind(&Supervisor::send_signal_to_actuators, this));
     }
 
     void initialize_parameters(void)
@@ -445,7 +458,7 @@ class Supervisor : public rclcpp::Node
 
     void initialize_plan_control_state()
     {
-      msg_current_plan_control_state.state = neptus_msgs::msg::PlanControlState::READY;
+      msg_current_plan_control_state.state = (uint8_t)neptus_msgs::msg::PlanControlState::READY;
       msg_current_plan_control_state.man_id = "";
       msg_current_plan_control_state.man_eta = 0;
       //msg_current_plan_control_state.man_type = neptus_msgs::msg::PlanControlState::
@@ -533,19 +546,66 @@ class Supervisor : public rclcpp::Node
 
         vsa_guidance::WGS84::displacement(msg_current_estimated_state.lat, msg_current_estimated_state.lon, 0, 
           current_maneuver_lat, current_maneuver_lon, 0,
-              &setpoint.x, &setpoint.y);
+          &setpoint.x, &setpoint.y);
 
-        trajectory_setpoints.push_back(setpoint);
+        if(maneuver->maneuver_imc_id == maneuver_id_e::maneuver_id_rows)
+        {
+          maneuver->get_rows_points(&trajectory_setpoints, setpoint);
+        }
+        else if(maneuver->maneuver_imc_id == maneuver_id_e::maneuver_id_follow_path)
+        {
+          maneuver->get_rippatern_points(&trajectory_setpoints, setpoint);
+        }
+        else if(maneuver->maneuver_imc_id == maneuver_id_e::maneuver_id_station_keeping)
+        {
+          is_station_keeping = true;
+          station_keeping_duration = (float)maneuver->duration;
+          station_keeping_radius = maneuver->radius;
+
+          trajectory_setpoints.push_back(setpoint);
+        }
+        else
+        {
+          trajectory_setpoints.push_back(setpoint);
+        }
+        
+        /*
+        std::cout << "msg_current_estimated_state.lat: " << msg_current_estimated_state.lat << std::endl;
+        std::cout << "msg_current_estimated_state.lon: " << msg_current_estimated_state.lon << std::endl;
+        std::cout << "current_maneuver_lat: " << current_maneuver_lat << std::endl;
+        std::cout << "current_maneuver_lon: " << current_maneuver_lon << std::endl;
+        std::cout << "==============================================" << std::endl;
+
+        std::cout << "setpoint_x: " << setpoint.x << std::endl;
+        std::cout << "setpoint_y: " << setpoint.y << std::endl;
+        std::cout << "setpoint_z: " << setpoint.z << std::endl;
+        std::cout << "speed: " << setpoint.speed << std::endl;
+        std::cout << "==============================================" << std::endl;
+        */
       }
     }
 
     void finish_plan_execution()
     {
       guidance->finish();
-      set_state(neptus_msgs::msg::VehicleState::SERVICE);
       current_plain_ = nullptr;
+      is_station_keeping = false;
 
+      int num_trajectory_points = (int)trajectory_setpoints.size();
+      for(int i = 0; i < num_trajectory_points; i++)
+      {
+        trajectory_setpoints.erase(trajectory_setpoints.begin());
+      }
+
+      if(timer_station_keeping != nullptr)
+      {
+        timer_station_keeping->cancel();
+      }
+
+      guidance->set_abs_xy_tolerance_error(this->get_parameter("guidance_xy_error_tolerance").as_double());
+      
       stop_thruster_align_rudders();
+      set_state(neptus_msgs::msg::VehicleState::SERVICE);
     }
 
     void stop_thruster_align_rudders(void)
@@ -596,20 +656,46 @@ class Supervisor : public rclcpp::Node
       else if(current_guidance_state == vsa_guidance::guidance_state_e::guidance_status_IN_PROGRESS)
       {
         // Moving to the setpoint case
+        guidance->set_abs_xy_tolerance_error(this->get_parameter("guidance_xy_error_tolerance").as_double());
         actuators_signals = guidance->execute(odometry, main_loop_dt);
       }
 
       else if(current_guidance_state == vsa_guidance::guidance_state_e::guidance_status_TARGET_REACHED)
       {
         // Reach the setpoint case
-        if(trajectory_setpoints.size() != 0)
+        if(!is_station_keeping)
         {
-          guidance->set_setpoint(trajectory_setpoints[0]);
-          trajectory_setpoints.erase(trajectory_setpoints.begin());
+          if(trajectory_setpoints.size() != 0)
+          {
+            guidance->set_setpoint(trajectory_setpoints[0]);
+            trajectory_setpoints.erase(trajectory_setpoints.begin());
+          }
+          else
+          {
+            finish_plan_execution();
+          }
         }
         else
         {
-          finish_plan_execution();
+          if(timer_station_keeping == nullptr)
+          {
+            if(station_keeping_duration > 0)
+            {
+              std::chrono::duration<double, std::milli>  station_keeping_time_ms{station_keeping_duration * 1000};
+              timer_station_keeping = this->create_wall_timer(station_keeping_time_ms, std::bind(&Supervisor::finish_plan_execution, this));
+            }
+          }
+          else
+          {
+            if((timer_station_keeping->is_canceled()) && (station_keeping_duration > 0))
+            {
+              std::chrono::duration<double, std::milli>  station_keeping_time_ms{station_keeping_duration * 1000};
+              timer_station_keeping = this->create_wall_timer(station_keeping_time_ms, std::bind(&Supervisor::finish_plan_execution, this));
+            }
+          }
+
+          guidance->set_abs_xy_tolerance_error(station_keeping_radius);
+          actuators_signals = guidance->execute(odometry, main_loop_dt);
         }
       }
 
@@ -653,8 +739,10 @@ class Supervisor : public rclcpp::Node
 
       // Timers
       rclcpp::TimerBase::SharedPtr timer_main_loop;
+      rclcpp::TimerBase::SharedPtr timer_motors_command_loop;
       rclcpp::TimerBase::SharedPtr timer_entity_monitoring_state_send_msg;
       rclcpp::TimerBase::SharedPtr timer_vehicle_state_send_msg;
+      rclcpp::TimerBase::SharedPtr timer_station_keeping;
 
       // Current Recever Msgs
       nav_msgs::msg::Odometry msg_current_odometry;
@@ -675,6 +763,11 @@ class Supervisor : public rclcpp::Node
       double initial_latitude_deg = 0.0; // Initial latitude in degrees
       double initial_longitude_deg = 0.0; // Initial longitude in degrees
       double main_loop_dt = 1.0; // Main Loop dt in secconds
+
+      // Station Keeping Parameters
+      bool is_station_keeping = false;
+      float station_keeping_duration = -1.0;
+      float station_keeping_radius = 0.0;
 
       // PlanDB Object pointer
       PlanDB *plan_db_ = nullptr;
